@@ -23,6 +23,7 @@ envoy_cc_library(
 envoy_cc_library(
     name = "config_lib",
     srcs = ["config.cc"],
+    repository = "@envoy",
     deps = [
         ":echo2",
         "@envoy//source/exe:envoy_common_lib",
