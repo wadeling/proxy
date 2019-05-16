@@ -10,8 +10,7 @@
 #include "common/common/logger.h"
 
 namespace Envoy {
-namespace Extensions {
-namespace NetworkFilters {
+namespace Tcp{
 namespace Echo2 {
 
 /**
@@ -67,7 +66,6 @@ private:
   Network::ReadFilterCallbacks* read_callbacks_{};
 };
 
-} // namespace Echo
-} // namespace NetworkFilters
-} // namespace Extensions
+} // namespace Echo2
+} // namespace Tcp
 } // namespace Envoy
