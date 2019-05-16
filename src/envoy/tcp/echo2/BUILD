@@ -21,7 +21,7 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
-    name = "config",
+    name = "config_lib",
     srcs = ["config.cc"],
     deps = [
         ":echo2",
