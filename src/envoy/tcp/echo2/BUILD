@@ -23,6 +23,7 @@ envoy_cc_library(
 envoy_cc_library(
     name = "config_lib",
     srcs = ["config.cc"],
+    visibility = ["//visibility:public"],
     repository = "@envoy",
     deps = [
         ":echo2",
