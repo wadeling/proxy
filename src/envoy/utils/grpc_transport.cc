@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 #include "src/envoy/utils/grpc_transport.h"
+
 #include "absl/types/optional.h"
 #include "src/envoy/utils/header_update.h"
 
@@ -31,19 +32,27 @@ const std::chrono::milliseconds kGrpcRequestTimeoutMs(5000);
 
 template <class RequestType, class ResponseType>
 GrpcTransport<RequestType, ResponseType>::GrpcTransport(
-    Grpc::AsyncClientPtr async_client, const RequestType &request,
+    Grpc::RawAsyncClientPtr &&async_client, const RequestType &request,
     ResponseType *response, Tracing::Span &parent_span,
     const std::string &serialized_forward_attributes,
     istio::mixerclient::DoneFunc on_done)
     : async_client_(std::move(async_client)),
       response_(response),
       serialized_forward_attributes_(serialized_forward_attributes),
-      on_done_(on_done),
-      request_(async_client_->send(
-          descriptor(), request, *this, parent_span,
-          absl::optional<std::chrono::milliseconds>(kGrpcRequestTimeoutMs))) {
+      on_done_(on_done) {
   ENVOY_LOG(debug, "Sending {} request: {}", descriptor().name(),
             request.DebugString());
+  Envoy::Http::AsyncClient::RequestOptions options;
+  options.setTimeout(kGrpcRequestTimeoutMs);
+  Protobuf::RepeatedPtrField<envoy::api::v2::route::RouteAction::HashPolicy>
+      hash_policy;
+  hash_policy.Add()->mutable_header()->set_header_name(
+      kIstioAttributeHeader.get());
+  hash_policy.Add()->mutable_header()->set_header_name(
+      Envoy::Http::Headers::get().Host.get());
+  options.setHashPolicy(hash_policy);
+  request_ =
+      async_client_->send(descriptor(), request, *this, parent_span, options);
 }
 
 template <class RequestType, class ResponseType>

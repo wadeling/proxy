@@ -22,28 +22,21 @@ ROOT=$(dirname $WD)
 # Postsubmit script triggered by Prow. #
 ########################################
 
-# Exit immediately for non zero status
-set -e
-# Check unset variables
-set -u
-# Print commands
-set -x
+# Disable RBE until docker-credential-gcloud is fixed.
+BAZEL_BUILD_RBE_JOBS=0
 
-if [ "${CI:-}" == 'bootstrap' ]; then
-  # Test harness will checkout code to directory $GOPATH/src/github.com/istio/proxy
-  # but we depend on being at path $GOPATH/src/istio.io/proxy for imports
-  ln -sf ${GOPATH}/src/github.com/istio ${GOPATH}/src/istio.io
-  ROOT=${GOPATH}/src/istio.io/proxy
-  cd ${GOPATH}/src/istio.io/proxy
+source "${WD}/proxy-common.inc"
 
-  # Setup bazel.rc
-  cp "${ROOT}/tools/bazel.rc.ci" "${HOME}/.bazelrc"
+if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+  echo "Detected GOOGLE_APPLICATION_CREDENTIALS, configuring Docker..." >&2
+  gcloud auth configure-docker
 fi
 
 GIT_SHA="$(git rev-parse --verify HEAD)"
 
-cd $ROOT
+GCS_BUILD_BUCKET="${GCS_BUILD_BUCKET:-istio-build}"
+GCS_ARTIFACTS_BUCKET="${GCS_ARTIFACTS_BUCKET:-istio-artifacts}"
 
 echo 'Create and push artifacts'
-script/release-binary
-ARTIFACTS_DIR="gs://istio-artifacts/proxy/${GIT_SHA}/artifacts/debs" make artifacts
+make push_release RELEASE_GCS_PATH="gs://${GCS_BUILD_BUCKET}/proxy"
+make artifacts ARTIFACTS_GCS_PATH="gs://${GCS_ARTIFACTS_BUCKET}/proxy/${GIT_SHA}/artifacts/debs"

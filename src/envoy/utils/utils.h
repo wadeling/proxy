@@ -31,6 +31,12 @@ void ExtractHeaders(const Http::HeaderMap& header_map,
                     const std::set<std::string>& exclusives,
                     std::map<std::string, std::string>& headers);
 
+// Find the given headers from the header map and extract them out to the string
+// map.
+void FindHeaders(const Http::HeaderMap& header_map,
+                 const std::set<std::string>& inclusives,
+                 std::map<std::string, std::string>& headers);
+
 // Get ip and port from Envoy ip.
 bool GetIpPort(const Network::Address::Ip* ip, std::string* str_ip, int* port);
 
@@ -41,6 +47,10 @@ bool GetDestinationUID(const envoy::api::v2::core::Metadata& metadata,
 // Get peer or local principal URI.
 bool GetPrincipal(const Network::Connection* connection, bool peer,
                   std::string* principal);
+
+// Get peer or local trust domain.
+bool GetTrustDomain(const Network::Connection* connection, bool peer,
+                    std::string* trust_domain);
 
 // Returns true if connection is mutual TLS enabled.
 bool IsMutualTLS(const Network::Connection* connection);

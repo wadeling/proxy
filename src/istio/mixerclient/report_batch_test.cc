@@ -14,6 +14,7 @@
  */
 
 #include "src/istio/mixerclient/report_batch.h"
+
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "include/istio/utils/attributes_builder.h"
@@ -68,7 +69,7 @@ class ReportBatchTest : public ::testing::Test {
   ::testing::NiceMock<MockReportTransport> mock_report_transport_;
   MockTimer* mock_timer_;
   AttributeCompressor compressor_;
-  std::unique_ptr<ReportBatch> batch_;
+  std::shared_ptr<ReportBatch> batch_;
 };
 
 TEST_F(ReportBatchTest, TestBatchDisabled) {

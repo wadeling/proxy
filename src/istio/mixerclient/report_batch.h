@@ -16,17 +16,18 @@
 #ifndef ISTIO_MIXERCLIENT_REPORT_BATCH_H
 #define ISTIO_MIXERCLIENT_REPORT_BATCH_H
 
+#include <atomic>
+#include <memory>
+#include <mutex>
+
 #include "include/istio/mixerclient/client.h"
 #include "src/istio/mixerclient/attribute_compressor.h"
-
-#include <atomic>
-#include <mutex>
 
 namespace istio {
 namespace mixerclient {
 
 // Report batch, this interface is thread safe.
-class ReportBatch {
+class ReportBatch : public std::enable_shared_from_this<ReportBatch> {
  public:
   ReportBatch(const ReportOptions& options, TransportReportFunc transport,
               TimerCreateFunc timer_create, AttributeCompressor& compressor);

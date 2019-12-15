@@ -14,7 +14,9 @@
  */
 
 #include "src/istio/utils/logger.h"
+
 #include <stdarg.h>
+#include <stdio.h>
 
 namespace istio {
 namespace utils {

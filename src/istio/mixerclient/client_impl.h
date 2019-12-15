@@ -16,14 +16,14 @@
 #ifndef ISTIO_MIXERCLIENT_CLIENT_IMPL_H
 #define ISTIO_MIXERCLIENT_CLIENT_IMPL_H
 
+#include <atomic>
+#include <random>
+
 #include "include/istio/mixerclient/client.h"
 #include "src/istio/mixerclient/attribute_compressor.h"
 #include "src/istio/mixerclient/check_cache.h"
 #include "src/istio/mixerclient/quota_cache.h"
 #include "src/istio/mixerclient/report_batch.h"
-
-#include <atomic>
-#include <random>
 
 using ::istio::mixerclient::CheckContextSharedPtr;
 using ::istio::mixerclient::SharedAttributesSharedPtr;
@@ -65,7 +65,7 @@ class MixerClientImpl : public MixerClient {
   // Cache for Check call.
   std::unique_ptr<CheckCache> check_cache_;
   // Report batch.
-  std::unique_ptr<ReportBatch> report_batch_;
+  std::shared_ptr<ReportBatch> report_batch_;
   // Cache for Quota call.
   std::unique_ptr<QuotaCache> quota_cache_;
 

@@ -13,6 +13,9 @@
  * limitations under the License.
  */
 
+#include <fstream>
+#include <iostream>
+
 #include "test/integration/http_integration.h"
 #include "test/integration/utility.h"
 
@@ -51,7 +54,37 @@ class JwtVerificationFilterIntegrationTest
         0, FakeHttpConnection::Type::HTTP1, version_, timeSystem()));
     registerPort("upstream_1",
                  fake_upstreams_.back()->localAddress()->ip()->port());
-    createTestServer(ConfigPath(), {"http"});
+
+    // upstream envoy hardcodes workspace name, so this code is duplicated
+    const std::string path = ConfigPath();
+    const std::string json_path =
+        TestEnvironment::runfilesPath(path, "io_istio_proxy");
+    std::string out_json_string =
+        TestEnvironment::readFileToStringForTest(json_path);
+
+    // Substitute ports.
+    for (const auto& it : port_map_) {
+      const std::regex port_regex("\\{\\{ " + it.first + " \\}\\}");
+      out_json_string = std::regex_replace(out_json_string, port_regex,
+                                           std::to_string(it.second));
+    }
+
+    // Substitute paths and other common things.
+    out_json_string = TestEnvironment::substitute(out_json_string, version_);
+
+    const std::string extension =
+        absl::EndsWith(path, ".yaml") ? ".yaml" : ".json";
+    const std::string out_json_path =
+        TestEnvironment::temporaryPath(path + ".with.ports" + extension);
+    TestEnvironment::createParentPath(out_json_path);
+    {
+      std::ofstream out_json_file(out_json_path);
+      out_json_file << out_json_string;
+    }
+
+    test_server_ =
+        createIntegrationTestServer(out_json_path, nullptr, timeSystem());
+    registerTestServerPorts({"http"});
   }
 
   /**
@@ -244,7 +277,7 @@ class JwtVerificationFilterIntegrationTestWithJwks
       "]}";
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     IpVersions, JwtVerificationFilterIntegrationTestWithJwks,
     testing::ValuesIn(TestEnvironment::getIpVersionsForTest()));
 
@@ -358,7 +391,7 @@ class JwtVerificationFilterIntegrationTestWithInjectedJwtResult
   }
 };
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     IpVersions, JwtVerificationFilterIntegrationTestWithInjectedJwtResult,
     testing::ValuesIn(TestEnvironment::getIpVersionsForTest()));
 

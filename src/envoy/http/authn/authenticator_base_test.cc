@@ -14,6 +14,7 @@
  */
 
 #include "src/envoy/http/authn/authenticator_base.h"
+
 #include "common/common/base64.h"
 #include "common/protobuf/protobuf.h"
 #include "envoy/api/v2/core/base.pb.h"
@@ -88,13 +89,11 @@ class ValidateX509Test : public testing::TestWithParam<iaapi::MutualTls::Mode>,
   virtual ~ValidateX509Test() {}
 
   NiceMock<Envoy::Network::MockConnection> connection_{};
-  NiceMock<Envoy::Ssl::MockConnectionInfo> ssl_{};
   Envoy::Http::HeaderMapImpl header_{};
   FilterConfig filter_config_{};
   FilterContext filter_context_{
       envoy::api::v2::core::Metadata::default_instance(), header_, &connection_,
-      istio::envoy::config::filter::http::authn::v2alpha1::FilterConfig::
-          default_instance()};
+      filter_config_};
 
   MockAuthenticatorBase authenticator_{&filter_context_};
 
@@ -123,10 +122,9 @@ TEST_P(ValidateX509Test, PlaintextConnection) {
 }
 
 TEST_P(ValidateX509Test, SslConnectionWithNoPeerCert) {
-  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(&ssl_));
-  EXPECT_CALL(Const(ssl_), peerCertificatePresented())
-      .Times(1)
-      .WillOnce(Return(false));
+  auto ssl = std::make_shared<NiceMock<Ssl::MockConnectionInfo>>();
+  ON_CALL(*ssl, peerCertificatePresented()).WillByDefault(Return(false));
+  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
 
   // Should return false except mode is PERMISSIVE (accept plaintext).
   if (GetParam() == iaapi::MutualTls::PERMISSIVE) {
@@ -138,41 +136,82 @@ TEST_P(ValidateX509Test, SslConnectionWithNoPeerCert) {
 }
 
 TEST_P(ValidateX509Test, SslConnectionWithPeerCert) {
-  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(&ssl_));
-  EXPECT_CALL(Const(ssl_), peerCertificatePresented())
-      .Times(1)
-      .WillOnce(Return(true));
-  const std::vector<std::string> sans{"foo", "bad"};
-  EXPECT_CALL(ssl_, uriSanPeerCertificate()).Times(1).WillOnce(Return(sans));
-  EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
+  auto ssl = std::make_shared<NiceMock<Ssl::MockConnectionInfo>>();
+  ON_CALL(*ssl, peerCertificatePresented()).WillByDefault(Return(true));
+  ON_CALL(*ssl, uriSanPeerCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"foo"}));
+  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
+
+  // Should return false due to unable to extract trust domain from principal.
+  EXPECT_FALSE(authenticator_.validateX509(mtls_params_, payload_));
   // When client certificate is present on mTLS, authenticated attribute should
   // be extracted.
   EXPECT_EQ(payload_->x509().user(), "foo");
 }
 
-TEST_P(ValidateX509Test, SslConnectionWithPeerSpiffeCert) {
-  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(&ssl_));
-  EXPECT_CALL(Const(ssl_), peerCertificatePresented())
-      .Times(1)
-      .WillOnce(Return(true));
-  const std::vector<std::string> sans{"spiffe://foo", "bad"};
-  EXPECT_CALL(ssl_, uriSanPeerCertificate()).Times(1).WillOnce(Return(sans));
-  EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
+TEST_P(ValidateX509Test, SslConnectionWithCertsSkipTrustDomainValidation) {
+  // skip trust domain validation.
+  google::protobuf::util::JsonParseOptions options;
+  JsonStringToMessage("{ skip_validate_trust_domain: true }", &filter_config_,
+                      options);
 
+  auto ssl = std::make_shared<NiceMock<Ssl::MockConnectionInfo>>();
+  ON_CALL(*ssl, peerCertificatePresented()).WillByDefault(Return(true));
+  ON_CALL(*ssl, uriSanPeerCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"foo"}));
+  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
+
+  // Should return true due to trust domain validation skipped.
+  EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
+  EXPECT_EQ(payload_->x509().user(), "foo");
+}
+
+TEST_P(ValidateX509Test, SslConnectionWithSpiffeCertsSameTrustDomain) {
+  auto ssl = std::make_shared<NiceMock<Ssl::MockConnectionInfo>>();
+  ON_CALL(*ssl, peerCertificatePresented()).WillByDefault(Return(true));
+  ON_CALL(*ssl, uriSanPeerCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"spiffe://td/foo"}));
+  ON_CALL(*ssl, uriSanLocalCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"spiffe://td/bar"}));
+  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
+
+  EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
   // When client certificate is present on mTLS, authenticated attribute should
   // be extracted.
-  EXPECT_EQ(payload_->x509().user(), "foo");
+  EXPECT_EQ(payload_->x509().user(), "td/foo");
+}
+
+TEST_P(ValidateX509Test, SslConnectionWithSpiffeCertsDifferentTrustDomain) {
+  auto ssl = std::make_shared<NiceMock<Ssl::MockConnectionInfo>>();
+  ON_CALL(*ssl, peerCertificatePresented()).WillByDefault(Return(true));
+  ON_CALL(*ssl, uriSanPeerCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"spiffe://td-1/foo"}));
+  ON_CALL(*ssl, uriSanLocalCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"spiffe://td-2/bar"}));
+  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
+
+  // Should return false due to trust domain validation failed.
+  EXPECT_FALSE(authenticator_.validateX509(mtls_params_, payload_));
+  // When client certificate is present on mTLS, authenticated attribute should
+  // be extracted.
+  EXPECT_EQ(payload_->x509().user(), "td-1/foo");
 }
 
 TEST_P(ValidateX509Test, SslConnectionWithPeerMalformedSpiffeCert) {
-  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(&ssl_));
-  EXPECT_CALL(Const(ssl_), peerCertificatePresented())
-      .Times(1)
-      .WillOnce(Return(true));
-  const std::vector<std::string> sans{"spiffe:foo", "bad"};
-  EXPECT_CALL(ssl_, uriSanPeerCertificate()).Times(1).WillOnce(Return(sans));
-  EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
+  // skip trust domain validation.
+  google::protobuf::util::JsonParseOptions options;
+  JsonStringToMessage("{ skip_validate_trust_domain: true }", &filter_config_,
+                      options);
 
+  auto ssl = std::make_shared<NiceMock<Ssl::MockConnectionInfo>>();
+  ON_CALL(*ssl, peerCertificatePresented()).WillByDefault(Return(true));
+  ON_CALL(*ssl, uriSanPeerCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"spiffe:foo"}));
+  ON_CALL(*ssl, uriSanLocalCertificate())
+      .WillByDefault(Return(std::vector<std::string>{"spiffe://td-2/bar"}));
+  EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
+
+  EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
   // When client certificate is present on mTLS and the spiffe subject format is
   // wrong
   // ("spiffe:foo" instead of "spiffe://foo"), the user attribute should be
@@ -180,9 +219,9 @@ TEST_P(ValidateX509Test, SslConnectionWithPeerMalformedSpiffeCert) {
   EXPECT_EQ(payload_->x509().user(), "spiffe:foo");
 }
 
-INSTANTIATE_TEST_CASE_P(ValidateX509Tests, ValidateX509Test,
-                        testing::Values(iaapi::MutualTls::STRICT,
-                                        iaapi::MutualTls::PERMISSIVE));
+INSTANTIATE_TEST_SUITE_P(ValidateX509Tests, ValidateX509Test,
+                         testing::Values(iaapi::MutualTls::STRICT,
+                                         iaapi::MutualTls::PERMISSIVE));
 
 class ValidateJwtTest : public testing::Test,
                         public Logger::Loggable<Logger::Id::filter> {
@@ -192,7 +231,6 @@ class ValidateJwtTest : public testing::Test,
   // StrictMock<Envoy::RequestInfo::MockRequestInfo> request_info_{};
   envoy::api::v2::core::Metadata dynamic_metadata_;
   NiceMock<Envoy::Network::MockConnection> connection_{};
-  // NiceMock<Envoy::Ssl::MockConnectionInfo> ssl_{};
   Envoy::Http::HeaderMapImpl header_{};
   FilterConfig filter_config_{};
   FilterContext filter_context_{dynamic_metadata_, header_, &connection_,

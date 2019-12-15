@@ -16,6 +16,7 @@
 #include "int_client.h"
 
 #include <future>
+
 #include "common/http/http1/codec_impl.h"
 #include "common/http/http2/codec_impl.h"
 #include "common/stats/isolated_store_impl.h"
@@ -252,8 +253,11 @@ class Http1ClientConnection : public ClientConnection {
                         Envoy::Network::ClientConnectionPtr network_connection)
       : ClientConnection(client, id, connect_callback, close_callback,
                          dispatcher),
+        stats_(),
         network_connection_(std::move(network_connection)),
-        http_connection_(*network_connection_, *this),
+        http_connection_(*network_connection_, stats_, *this,
+                         Envoy::Http::Http1Settings(),
+                         Envoy::Http::DEFAULT_MAX_HEADERS_COUNT),
         read_filter_{std::make_shared<HttpClientReadFilter>(client.name(), id,
                                                             http_connection_)} {
     network_connection_->addReadFilter(read_filter_);
@@ -275,6 +279,7 @@ class Http1ClientConnection : public ClientConnection {
 
   Http1ClientConnection &operator=(const Http1ClientConnection &) = delete;
 
+  Envoy::Stats::IsolatedStoreImpl stats_;
   Envoy::Network::ClientConnectionPtr network_connection_;
   Envoy::Http::Http1::ClientConnectionImpl http_connection_;
   HttpClientReadFilterSharedPtr read_filter_;
@@ -295,7 +300,8 @@ class Http2ClientConnection : public ClientConnection {
         settings_(),
         network_connection_(std::move(network_connection)),
         http_connection_(*network_connection_, *this, stats_, settings_,
-                         max_request_headers_kb),
+                         max_request_headers_kb,
+                         Envoy::Http::DEFAULT_MAX_HEADERS_COUNT),
         read_filter_{std::make_shared<HttpClientReadFilter>(client.name(), id,
                                                             http_connection_)} {
     network_connection_->addReadFilter(read_filter_);

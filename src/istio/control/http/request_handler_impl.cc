@@ -14,6 +14,7 @@
  */
 
 #include "src/istio/control/http/request_handler_impl.h"
+
 #include "src/istio/control/http/attributes_builder.h"
 
 using ::google::protobuf::util::Status;
@@ -42,8 +43,10 @@ void RequestHandlerImpl::AddForwardAttributes(CheckData* check_data) {
   }
   forward_attributes_added_ = true;
 
-  AttributesBuilder builder(attributes_->attributes());
-  builder.ExtractForwardedAttributes(check_data);
+  if (!service_context_->ignore_forwarded_attributes()) {
+    AttributesBuilder builder(attributes_->attributes());
+    builder.ExtractForwardedAttributes(check_data);
+  }
 }
 
 void RequestHandlerImpl::AddCheckAttributes(CheckData* check_data) {
@@ -58,8 +61,6 @@ void RequestHandlerImpl::AddCheckAttributes(CheckData* check_data) {
 
     AttributesBuilder builder(attributes_->attributes());
     builder.ExtractCheckAttributes(check_data);
-
-    service_context_->AddApiAttributes(check_data, attributes_->attributes());
   }
 }
 

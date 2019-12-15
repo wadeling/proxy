@@ -14,6 +14,7 @@
  */
 
 #include "src/envoy/tcp/mixer/filter.h"
+
 #include "common/common/enum_to_int.h"
 #include "extensions/filters/network/well_known_names.h"
 #include "src/envoy/utils/utils.h"
@@ -54,8 +55,6 @@ void Filter::cancelCheck() {
 
 // Makes a Check() call to Mixer.
 void Filter::callCheck() {
-  handler_ = control_.controller()->CreateRequestHandler();
-
   state_ = State::Calling;
   filter_callbacks_->connection().readDisable(true);
   calling_check_ = true;
@@ -112,8 +111,10 @@ Network::FilterStatus Filter::onData(Buffer::Instance &data, bool) {
                           .dynamicMetadata()
                           .filter_metadata());
 
-  return state_ == State::Calling ? Network::FilterStatus::StopIteration
-                                  : Network::FilterStatus::Continue;
+  return (state_ == State::Calling || filter_callbacks_->connection().state() !=
+                                          Network::Connection::State::Open)
+             ? Network::FilterStatus::StopIteration
+             : Network::FilterStatus::Continue;
 }
 
 // Network::WriteFilter
@@ -131,6 +132,8 @@ Network::FilterStatus Filter::onNewConnection() {
                  filter_callbacks_->connection().remoteAddress()->asString(),
                  filter_callbacks_->connection().localAddress()->asString());
 
+  handler_ = control_.controller()->CreateRequestHandler();
+  handler_->BuildCheckAttributes(this);
   // Wait until onData() is invoked.
   return Network::FilterStatus::Continue;
 }
@@ -166,11 +169,12 @@ void Filter::completeCheck(const CheckResponseInfo &info) {
 // Network::ConnectionCallbacks
 void Filter::onEvent(Network::ConnectionEvent event) {
   if (filter_callbacks_->upstreamHost()) {
-    ENVOY_LOG(debug, "Called tcp filter onEvent: {} upstream {}",
-              enumToInt(event),
-              filter_callbacks_->upstreamHost()->address()->asString());
+    ENVOY_CONN_LOG(debug, "Called tcp filter onEvent: {} upstream {}",
+                   filter_callbacks_->connection(), enumToInt(event),
+                   filter_callbacks_->upstreamHost()->address()->asString());
   } else {
-    ENVOY_LOG(debug, "Called tcp filter onEvent: {}", enumToInt(event));
+    ENVOY_CONN_LOG(debug, "Called tcp filter onEvent: {}",
+                   filter_callbacks_->connection(), enumToInt(event));
   }
 
   if (event == Network::ConnectionEvent::RemoteClose ||
@@ -207,6 +211,9 @@ bool Filter::GetDestinationIpPort(std::string *str_ip, int *port) const {
       filter_callbacks_->upstreamHost()->address()) {
     return Utils::GetIpPort(filter_callbacks_->upstreamHost()->address()->ip(),
                             str_ip, port);
+  } else {
+    return Utils::GetIpPort(
+        filter_callbacks_->connection().localAddress()->ip(), str_ip, port);
   }
   return false;
 }

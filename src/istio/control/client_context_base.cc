@@ -14,6 +14,7 @@
  */
 
 #include "client_context_base.h"
+
 #include "include/istio/mixerclient/check_response.h"
 #include "include/istio/utils/attribute_names.h"
 #include "include/istio/utils/attributes_builder.h"
@@ -65,9 +66,7 @@ CheckOptions GetCheckOptions(const TransportConfig& config) {
       options.network_fail_open = false;
     }
 
-    if (0 <= config.network_fail_policy().max_retry()) {
-      options.retries = config.network_fail_policy().max_retry();
-    }
+    options.retries = config.network_fail_policy().max_retry();
 
     if (config.network_fail_policy().has_base_retry_wait()) {
       options.base_retry_ms =
@@ -93,7 +92,22 @@ ReportOptions GetReportOptions(const TransportConfig& config) {
   if (config.disable_report_batch()) {
     return ReportOptions(0, 1000);
   }
-  return ReportOptions();
+
+  // When batch reporting is enabled, if report_batch_max_entries or
+  // report_batch_max_time is set to 0 (default if not specified), set
+  // them to their default value defined in the ReportOptions constructor
+  uint32_t max_entries = config.report_batch_max_entries();
+  uint32_t max_time_ms = DurationToMsec(config.report_batch_max_time());
+
+  if (max_entries == 0) {
+    max_entries = ::istio::mixerclient::DEFAULT_BATCH_REPORT_MAX_ENTRIES;
+  }
+
+  if (max_time_ms == 0) {
+    max_time_ms = ::istio::mixerclient::DEFAULT_BATCH_REPORT_MAX_TIME_MS;
+  }
+
+  return ReportOptions(max_entries, max_time_ms);
 }
 
 }  // namespace

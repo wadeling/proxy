@@ -18,6 +18,7 @@
 #include "common/api/api_impl.h"
 #include "common/grpc/common.h"
 #include "common/http/codec_client.h"
+#include "common/network/connection_balancer_impl.h"
 #include "common/network/listen_socket_impl.h"
 #include "common/stats/isolated_store_impl.h"
 #include "test/test_common/test_time.h"
@@ -42,9 +43,6 @@ class ServerStream {
   ServerStream();
 
   virtual ~ServerStream();
-
-  ServerStream(ServerStream &&) = default;
-  ServerStream &operator=(ServerStream &&) = default;
 
   /**
    * Send a HTTP header-only response and close the stream.
@@ -108,9 +106,6 @@ class ServerConnection : public Envoy::Network::ReadFilter,
                    Envoy::Stats::Scope &scope);
 
   virtual ~ServerConnection();
-
-  ServerConnection(ServerConnection &&) = default;
-  ServerConnection &operator=(ServerConnection &&) = default;
 
   const std::string &name() const;
 
@@ -192,9 +187,6 @@ class ServerFilterChain : public Envoy::Network::FilterChain {
 
   virtual ~ServerFilterChain();
 
-  ServerFilterChain(ServerFilterChain &&) = default;
-  ServerFilterChain &operator=(ServerFilterChain &&) = default;
-
   //
   // Envoy::Network::FilterChain
   //
@@ -237,9 +229,6 @@ class LocalListenSocket : public Envoy::Network::TcpListenSocket {
 
   virtual ~LocalListenSocket();
 
-  LocalListenSocket(LocalListenSocket &&) = default;
-  LocalListenSocket &operator=(LocalListenSocket &&) = default;
-
  private:
   LocalListenSocket(const LocalListenSocket &) = delete;
   void operator=(const LocalListenSocket &) = delete;
@@ -258,9 +247,6 @@ class ServerCallbackHelper {
                        ServerCloseCallback close_callback = nullptr);
 
   virtual ~ServerCallbackHelper();
-
-  ServerCallbackHelper(ServerCallbackHelper &&) = default;
-  ServerCallbackHelper &operator=(ServerCallbackHelper &&) = default;
 
   uint32_t connectionsAccepted() const;
   uint32_t requestsReceived() const;
@@ -312,9 +298,6 @@ class Server : public Envoy::Network::FilterChainManager,
 
   virtual ~Server();
 
-  Server(Server &&) = default;
-  Server &operator=(Server &&) = default;
-
   void start(ServerAcceptCallback accept_callback,
              ServerRequestCallback request_callback,
              ServerCloseCallback close_callback);
@@ -348,10 +331,25 @@ class Server : public Envoy::Network::FilterChainManager,
 
   virtual bool handOffRestoredDestinationConnections() const override;
 
+  virtual const Envoy::Network::ActiveUdpListenerFactory *udpListenerFactory()
+      override {
+    return nullptr;
+  }
+
+  Envoy::Network::ConnectionBalancer &connectionBalancer() override {
+    return connection_balancer_;
+  }
+
+  envoy::api::v2::core::TrafficDirection direction() const override {
+    return envoy::api::v2::core::TrafficDirection::UNSPECIFIED;
+  }
+
   // TODO does this affect socket recv buffer size?  Only for new connections?
   virtual uint32_t perConnectionBufferLimitBytes() const override;
 
   virtual std::chrono::milliseconds listenerFiltersTimeout() const override;
+
+  virtual bool continueOnListenerFiltersTimeout() const override;
 
   virtual Envoy::Stats::Scope &listenerScope() override;
 
@@ -377,6 +375,10 @@ class Server : public Envoy::Network::FilterChainManager,
   virtual bool createListenerFilterChain(
       Envoy::Network::ListenerFilterManager &) override;
 
+  virtual bool createUdpListenerFilterChain(
+      Envoy::Network::UdpListenerFilterManager &,
+      Envoy::Network::UdpReadFilterCallbacks &) override;
+
  private:
   Server(const Server &) = delete;
   void operator=(const Server &) = delete;
@@ -387,6 +389,7 @@ class Server : public Envoy::Network::FilterChainManager,
   Envoy::Api::Impl api_;
   Envoy::Event::DispatcherPtr dispatcher_;
   Envoy::Network::ConnectionHandlerPtr connection_handler_;
+  Envoy::Network::NopConnectionBalancerImpl connection_balancer_;
   Envoy::Thread::ThreadPtr thread_;
   std::atomic<bool> is_running{false};
 

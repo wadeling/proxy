@@ -14,6 +14,8 @@
  */
 
 #include "src/envoy/utils/utils.h"
+
+#include "absl/strings/match.h"
 #include "include/istio/utils/attributes_builder.h"
 #include "mixer/v1/attributes.pb.h"
 
@@ -34,6 +36,27 @@ const std::string kPerHostMetadataKey("istio");
 // Attribute field for per-host data override
 const std::string kMetadataDestinationUID("uid");
 
+bool getCertSAN(const Network::Connection* connection, bool peer,
+                std::string* principal) {
+  if (connection) {
+    const auto ssl = connection->ssl();
+    if (ssl != nullptr) {
+      const auto& sans =
+          (peer ? ssl->uriSanPeerCertificate() : ssl->uriSanLocalCertificate());
+      if (sans.empty()) {
+        // empty result is not allowed.
+        return false;
+      }
+      *principal = sans[0];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasSPIFFEPrefix(const std::string& san) {
+  return absl::StartsWith(san, kSPIFFEPrefix);
+}
 }  // namespace
 
 void ExtractHeaders(const Http::HeaderMap& header_map,
@@ -54,6 +77,31 @@ void ExtractHeaders(const Http::HeaderMap& header_map,
         auto key = std::string(header.key().getStringView());
         auto value = std::string(header.value().getStringView());
         if (ctx->exclusives.count(key) == 0) {
+          ctx->headers[key] = value;
+        }
+        return Http::HeaderMap::Iterate::Continue;
+      },
+      &ctx);
+}
+
+void FindHeaders(const Http::HeaderMap& header_map,
+                 const std::set<std::string>& inclusives,
+                 std::map<std::string, std::string>& headers) {
+  struct Context {
+    Context(const std::set<std::string>& inclusives,
+            std::map<std::string, std::string>& headers)
+        : inclusives(inclusives), headers(headers) {}
+    const std::set<std::string>& inclusives;
+    std::map<std::string, std::string>& headers;
+  };
+  Context ctx(inclusives, headers);
+  header_map.iterate(
+      [](const Http::HeaderEntry& header,
+         void* context) -> Http::HeaderMap::Iterate {
+        Context* ctx = static_cast<Context*>(context);
+        auto key = std::string(header.key().getStringView());
+        auto value = std::string(header.value().getStringView());
+        if (ctx->inclusives.count(key) != 0) {
           ctx->headers[key] = value;
         }
         return Http::HeaderMap::Iterate::Continue;
@@ -95,28 +143,35 @@ bool GetDestinationUID(const envoy::api::v2::core::Metadata& metadata,
 
 bool GetPrincipal(const Network::Connection* connection, bool peer,
                   std::string* principal) {
-  if (connection) {
-    Ssl::ConnectionInfo* ssl =
-        const_cast<Ssl::ConnectionInfo*>(connection->ssl());
-    if (ssl != nullptr) {
-      const std::vector<std::string> sans =
-          (peer ? ssl->uriSanPeerCertificate() : ssl->uriSanLocalCertificate());
-      if (sans.empty()) {
-        // empty result is not allowed
-        return false;
-      }
-      const std::string result = sans[0];
-      if (result.length() >= kSPIFFEPrefix.length() &&
-          result.compare(0, kSPIFFEPrefix.length(), kSPIFFEPrefix) == 0) {
-        // Strip out the prefix "spiffe://" in the identity.
-        *principal = result.substr(kSPIFFEPrefix.size());
-      } else {
-        *principal = result;
-      }
-      return true;
+  std::string cert_san;
+  if (getCertSAN(connection, peer, &cert_san)) {
+    if (hasSPIFFEPrefix(cert_san)) {
+      // Strip out the prefix "spiffe://" in the identity.
+      *principal = cert_san.substr(kSPIFFEPrefix.size());
+    } else {
+      *principal = cert_san;
     }
+    return true;
   }
   return false;
+}
+
+bool GetTrustDomain(const Network::Connection* connection, bool peer,
+                    std::string* trust_domain) {
+  std::string cert_san;
+  if (!getCertSAN(connection, peer, &cert_san) || !hasSPIFFEPrefix(cert_san)) {
+    return false;
+  }
+
+  // Skip the prefix "spiffe://" before getting trust domain.
+  std::size_t slash = cert_san.find('/', kSPIFFEPrefix.size());
+  if (slash == std::string::npos) {
+    return false;
+  }
+
+  std::size_t len = slash - kSPIFFEPrefix.size();
+  *trust_domain = cert_san.substr(kSPIFFEPrefix.size(), len);
+  return true;
 }
 
 bool IsMutualTLS(const Network::Connection* connection) {

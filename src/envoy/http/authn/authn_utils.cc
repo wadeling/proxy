@@ -13,10 +13,12 @@
  * limitations under the License.
  */
 
+#include "authn_utils.h"
+
 #include <regex>
 
 #include "absl/strings/match.h"
-#include "authn_utils.h"
+#include "absl/strings/str_split.h"
 #include "common/json/json_loader.h"
 #include "google/protobuf/struct.pb.h"
 #include "src/envoy/http/jwt_auth/jwt.h"
@@ -36,12 +38,18 @@ static const std::string kExchangedTokenOriginalPayload = "original_claims";
 // Extract JWT claim as a string list.
 // This function only extracts string and string list claims.
 // A string claim is extracted as a string list of 1 item.
+// A string claim with whitespace is extracted as a string list with each
+// sub-string delimited with the whitespace.
 void ExtractStringList(const std::string& key, const Envoy::Json::Object& obj,
                        std::vector<std::string>* list) {
   // First, try as string
   try {
     // Try as string, will throw execption if object type is not string.
-    list->push_back(obj.getString(key));
+    const std::vector<std::string> keys =
+        absl::StrSplit(obj.getString(key), ' ', absl::SkipEmpty());
+    for (auto key : keys) {
+      list->push_back(key);
+    }
   } catch (Json::Exception& e) {
     // Not convertable to string
   }

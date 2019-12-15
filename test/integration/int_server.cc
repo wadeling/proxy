@@ -14,7 +14,9 @@
  */
 
 #include "int_server.h"
+
 #include <future>
+
 #include "common/common/lock_guard.h"
 #include "common/common/logger.h"
 #include "common/grpc/codec.h"
@@ -58,9 +60,6 @@ class ServerStreamImpl : public ServerStream,
     ENVOY_LOG(trace, "ServerStream({}:{}:{}) destroyed", connection_.name(),
               connection_.id(), id_);
   }
-
-  ServerStreamImpl(ServerStreamImpl &&) = default;
-  ServerStreamImpl &operator=(ServerStreamImpl &&) = default;
 
   //
   // ServerStream
@@ -313,8 +312,8 @@ ServerConnection::ServerConnection(
     case Envoy::Http::CodecClient::Type::HTTP1:
       http_connection_ =
           std::make_unique<Envoy::Http::Http1::ServerConnectionImpl>(
-              network_connection, *this, Envoy::Http::Http1Settings(),
-              max_request_headers_kb);
+              network_connection, scope, *this, Envoy::Http::Http1Settings(),
+              max_request_headers_kb, Envoy::Http::DEFAULT_MAX_HEADERS_COUNT);
       break;
     case Envoy::Http::CodecClient::Type::HTTP2: {
       Envoy::Http::Http2Settings settings;
@@ -323,7 +322,7 @@ ServerConnection::ServerConnection(
       http_connection_ =
           std::make_unique<Envoy::Http::Http2::ServerConnectionImpl>(
               network_connection, *this, scope, settings,
-              max_request_headers_kb);
+              max_request_headers_kb, Envoy::Http::DEFAULT_MAX_HEADERS_COUNT);
     } break;
     default:
       ENVOY_LOG(error,
@@ -332,8 +331,8 @@ ServerConnection::ServerConnection(
                 name_, id_, static_cast<int>(http_type) + 1);
       http_connection_ =
           std::make_unique<Envoy::Http::Http1::ServerConnectionImpl>(
-              network_connection, *this, Envoy::Http::Http1Settings(),
-              max_request_headers_kb);
+              network_connection, scope, *this, Envoy::Http::Http1Settings(),
+              max_request_headers_kb, Envoy::Http::DEFAULT_MAX_HEADERS_COUNT);
       break;
   }
 }
@@ -615,8 +614,8 @@ Server::Server(const std::string &name,
       api_(Envoy::Thread::threadFactoryForTest(), stats_, time_system_,
            Envoy::Filesystem::fileSystemForTest()),
       dispatcher_(api_.allocateDispatcher()),
-      connection_handler_(new Envoy::Server::ConnectionHandlerImpl(
-          ENVOY_LOGGER(), *dispatcher_)),
+      connection_handler_(
+          new Envoy::Server::ConnectionHandlerImpl(*dispatcher_, "test")),
       thread_(nullptr),
       listening_socket_(listening_socket),
       server_filter_chain_(transport_socket_factory),
@@ -710,6 +709,8 @@ std::chrono::milliseconds Server::listenerFiltersTimeout() const {
   return std::chrono::milliseconds(0);
 }
 
+bool Server::continueOnListenerFiltersTimeout() const { return false; }
+
 Envoy::Stats::Scope &Server::listenerScope() { return stats_; }
 
 uint64_t Server::listenerTag() const { return 0; }
@@ -745,6 +746,12 @@ bool Server::createNetworkFilterChain(
 
 bool Server::createListenerFilterChain(
     Envoy::Network::ListenerFilterManager &) {
+  return true;
+}
+
+bool Server::createUdpListenerFilterChain(
+    Envoy::Network::UdpListenerFilterManager &,
+    Envoy::Network::UdpReadFilterCallbacks &) {
   return true;
 }
 

@@ -31,6 +31,14 @@ namespace Envoy {
 namespace Http {
 namespace Mixer {
 
+struct RcDetailsValues {
+  // The Mixer filter sent direct response.
+  const std::string MixerDirectResponse = "mixer_direct_response";
+  // The Mixer filter rejected the request.
+  const std::string MixerAccessDenied = "mixer_access_denied";
+};
+typedef ConstSingleton<RcDetailsValues> RcDetails;
+
 Filter::Filter(Control& control)
     : control_(control),
       state_(NotStarted),
@@ -40,32 +48,26 @@ Filter::Filter(Control& control)
 }
 
 void Filter::ReadPerRouteConfig(
-    const Router::RouteEntry* entry,
+    const PerRouteServiceConfig& route_cfg,
     ::istio::control::http::Controller::PerRouteConfig* config) {
-  if (entry == nullptr) {
-    return;
+  if (!control_.controller()->LookupServiceConfig(route_cfg.hash)) {
+    control_.controller()->AddServiceConfig(route_cfg.hash, route_cfg.config);
   }
-
-  // Check v2 per-route config.
-  auto route_cfg = entry->perFilterConfigTyped<PerRouteServiceConfig>("mixer");
-  if (route_cfg) {
-    if (!control_.controller()->LookupServiceConfig(route_cfg->hash)) {
-      control_.controller()->AddServiceConfig(route_cfg->hash,
-                                              route_cfg->config);
-    }
-    config->service_config_id = route_cfg->hash;
-    return;
-  }
+  config->service_config_id = route_cfg.hash;
 }
 
 FilterHeadersStatus Filter::decodeHeaders(HeaderMap& headers, bool) {
   ENVOY_LOG(debug, "Called Mixer::Filter : {}", __func__);
-  request_total_size_ += headers.byteSize();
+  request_total_size_ += headers.refreshByteSize();
 
   ::istio::control::http::Controller::PerRouteConfig config;
   auto route = decoder_callbacks_->route();
   if (route) {
-    ReadPerRouteConfig(route->routeEntry(), &config);
+    auto route_cfg =
+        route->perFilterConfigTyped<PerRouteServiceConfig>("mixer");
+    if (route_cfg) {
+      ReadPerRouteConfig(*route_cfg, &config);
+    }
   }
   handler_ = control_.controller()->CreateRequestHandler(config);
 
@@ -101,7 +103,7 @@ FilterDataStatus Filter::decodeData(Buffer::Instance& data, bool end_stream) {
 
 FilterTrailersStatus Filter::decodeTrailers(HeaderMap& trailers) {
   ENVOY_LOG(debug, "Called Mixer::Filter : {}", __func__);
-  request_total_size_ += trailers.byteSize();
+  request_total_size_ += trailers.refreshByteSize();
   if (state_ == Calling) {
     return FilterTrailersStatus::StopIteration;
   }
@@ -171,7 +173,7 @@ void Filter::completeCheck(const CheckResponseInfo& info) {
         [this](HeaderMap& headers) {
           UpdateHeaders(headers, route_directive_.response_header_operations());
         },
-        absl::nullopt);
+        absl::nullopt, RcDetails::get().MixerDirectResponse);
     return;
   }
 
@@ -181,7 +183,8 @@ void Filter::completeCheck(const CheckResponseInfo& info) {
 
     int status_code = ::istio::utils::StatusHttpCode(status.error_code());
     decoder_callbacks_->sendLocalReply(Code(status_code), status.ToString(),
-                                       nullptr, absl::nullopt);
+                                       nullptr, absl::nullopt,
+                                       RcDetails::get().MixerAccessDenied);
     return;
   }
 
@@ -224,7 +227,14 @@ void Filter::log(const HeaderMap* request_headers,
 
     // Here Request is rejected by other filters, Mixer filter is not called.
     ::istio::control::http::Controller::PerRouteConfig config;
-    ReadPerRouteConfig(stream_info.routeEntry(), &config);
+    auto route_entry = stream_info.routeEntry();
+    if (route_entry) {
+      auto route_cfg =
+          route_entry->perFilterConfigTyped<PerRouteServiceConfig>("mixer");
+      if (route_cfg) {
+        ReadPerRouteConfig(*route_cfg, &config);
+      }
+    }
     handler_ = control_.controller()->CreateRequestHandler(config);
   }
 
@@ -232,8 +242,8 @@ void Filter::log(const HeaderMap* request_headers,
   CheckData check_data(*request_headers, stream_info.dynamicMetadata(),
                        decoder_callbacks_->connection());
   // response trailer header is not counted to response total size.
-  ReportData report_data(response_headers, response_trailers, stream_info,
-                         request_total_size_);
+  ReportData report_data(request_headers, response_headers, response_trailers,
+                         stream_info, request_total_size_);
   handler_->Report(&check_data, &report_data);
 }
 

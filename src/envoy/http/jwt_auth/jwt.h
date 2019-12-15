@@ -15,13 +15,13 @@
 
 #pragma once
 
-#include "envoy/json/json_object.h"
-#include "openssl/ec.h"
-#include "openssl/evp.h"
-
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "envoy/json/json_object.h"
+#include "openssl/ec.h"
+#include "openssl/evp.h"
 
 namespace Envoy {
 namespace Http {
@@ -231,8 +231,6 @@ class Jwt : public WithStatus {
   int64_t Exp();
 
  private:
-  const EVP_MD* md_;
-
   Json::ObjectSharedPtr header_;
   std::string header_str_;
   std::string header_str_base64url_;
